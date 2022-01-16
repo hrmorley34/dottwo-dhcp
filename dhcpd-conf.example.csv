@@ -1,0 +1,17 @@
+Device Name,MAC address,IP Address,IPv6
+Infrastructure,,'1-9,
+router,00:11:22:33:44:55,192.168.7.1,fd00::7:1
+dhcpserver,aa:bb:cc:dd:ee:ff,192.168.7.2,fd00::7:2
+,,,,
+Examples,,'10-19,
+my-device,01:23:45:67:89:ab,192.168.7.11,fd00::7:11
+,,,,
+Other,,'3-254,'3-1ff
+Minimum,,192.168.7.3,fd00::7:3
+Maximum,,192.168.7.254,fd00::7:1ff
+,,,,
+More devices,,'200-250,
+a thing,98:76:54:32:10:98,192.168.7.234,fd00::7:234
+,,,,
+Block,,none,none
+dont-assign-this,ac:dc:ac:dc:ac:dc,none,none

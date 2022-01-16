@@ -1,3 +1,5 @@
 gen/
 leases/
+template/*
+!template/*.example.*
 dhcpd-conf.csv
