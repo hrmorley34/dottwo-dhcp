@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import csv
-import json
 import logging
 import re
 import string
 import sys
-from typing import Any, Dict, Optional, Set, TextIO, Tuple
+from typing import Any, Dict, Optional, Set, TextIO
+
+from lib import Device, Group, Range, StrRange
 
 
 parser = argparse.ArgumentParser(
@@ -103,16 +104,10 @@ IGNORE_FMT = re.compile(
 )  # any number of "?"s (including ""), none or deny/no
 
 
-RangeT = Tuple[Optional[str], Optional[str]]
-
-
-groups: Dict[Optional[str], Dict[str, Any]] = {}
+groups: Dict[Optional[str], Group] = {}
 cgroup = None
 used_names: Set[str] = set()
-main_range: Dict[str, RangeT] = {
-    "min": (None, None),
-    "max": (None, None),
-}
+main_range = Range((None, None), (None, None))
 
 r = csv.reader(ARGS.csv)
 headers = next(r)
@@ -134,15 +129,14 @@ for line in r:
         cgroup = line[0].replace("\n", "\\n")
         if cgroup and RANGE_NAME.match(cgroup):
             continue  # use `main_range`
-        groups[cgroup] = {
-            "range": tuple(map(int, line[2].strip()[1:].split("-")))
+        groups[cgroup] = Group(
+            range=tuple(line[2].strip()[1:].split("-"))
             if RANGEIP_FMT.match(line[2].strip())
             else (None, None),
-            "rangev6": tuple(line[3].strip()[1:].split("-"))
+            rangev6=tuple(line[3].strip()[1:].split("-"))
             if RANGEIP_FMT.match(line[3].strip())
             else (None, None),
-            "devices": [],
-        }
+        )
         continue
 
     if cgroup and RANGE_NAME.match(cgroup):
@@ -162,15 +156,23 @@ for line in r:
             ipv6 = None
 
         if re.match(r"^min(imum)?.*$", name, re.I):
-            main_range["min"] = (
-                ip or main_range["min"][0],
-                ipv6 or main_range["min"][1],
+            main_range.range = StrRange(
+                ip or main_range.range.min,
+                main_range.range.max,
+            )
+            main_range.rangev6 = StrRange(
+                ipv6 or main_range.rangev6.min,
+                main_range.rangev6.max,
             )
             continue
         elif re.match(r"^max(imum)?.*$", name, re.I):
-            main_range["max"] = (
-                ip or main_range["max"][0],
-                ipv6 or main_range["max"][1],
+            main_range.range = StrRange(
+                main_range.range.min,
+                ip or main_range.range.max,
+            )
+            main_range.rangev6 = StrRange(
+                main_range.rangev6.min,
+                ipv6 or main_range.rangev6.max,
             )
             continue
         # else: go on to add hosts
@@ -207,59 +209,60 @@ for line in r:
                 logging.warning(f"Invalid IPv6: {ipv6}")
             ipv6 = None
 
-        groups[cgroup]["devices"].append(
-            {
-                "human_name": human_name,
-                "name": name,
-                "mac": mac,
-                "ip": ip,
-                "ipv6": ipv6,
-                "deny": bool(DENY_NAME.match(cgroup)) if cgroup is not None else False,
-            }
+        groups[cgroup].devices.append(
+            Device(
+                human_name,
+                name,
+                mac,
+                ip,
+                ipv6,
+                bool(DENY_NAME.match(cgroup)) if cgroup is not None else False,
+            )
         )
 ARGS.csv.close()
 
-logging.debug(json.dumps(groups))
+
+logging.debug(groups)
+logging.debug(main_range)
 
 groups_text: str = ""  # group { host { }; host { }; ... }; group { ... }; ...
 groups6_text: str = ""  # ^^^ but with fixed-address6
 range_text: str = ""  # range x.x.x.x y.y.y.y;
 range6_text: str = ""  # range6 x:x::x:x y:y::y:y;
 
-if main_range["min"][0] and main_range["max"][0]:
-    range_text += f"range {main_range['min'][0]} {main_range['max'][0]};\n"
-if main_range["min"][1] and main_range["max"][1]:
-    range6_text += f"range6 {main_range['min'][1]} {main_range['max'][1]};\n"
+if main_range.range.min and main_range.range.max:
+    range_text += f"range {main_range.range.min} {main_range.range.max};\n"
+if main_range.rangev6.min and main_range.rangev6.max:
+    range6_text += f"range6 {main_range.rangev6.min} {main_range.rangev6.max};\n"
 
 for name, properties in groups.items():
-    logging.info(f"Group {name}: {properties['range'][0]}-{properties['range'][1]}")
+    logging.info(f"Group {name}: {properties.range[0]}-{properties.range[1]}")
     groups_text += "group {\n"
     groups_text += f"\t# {name}"
-    if properties["range"]:
-        groups_text += f" ({properties['range'][0]}-{properties['range'][1]})"
+    if any(properties.range):
+        groups_text += f" ({properties.range[0]}-{properties.range[1]})"
     groups_text += "\n"
     groups6_text += "group {\n"
     groups6_text += f"\t# {name}"
-    if properties["rangev6"]:
-        groups6_text += f" ({properties['rangev6'][0]}-{properties['rangev6'][1]})"
+    if any(properties.rangev6):
+        groups6_text += f" ({properties.rangev6[0]}-{properties.rangev6[1]})"
     groups6_text += "\n"
 
-    for dev in properties["devices"]:
-        logging.debug(
-            f"|- {dev['human_name']}: {dev['mac']} -> {dev['ip']} / {dev['ipv6']}"
-        )
-        groups_text += "\thost " + dev["name"] + " {\n"
-        groups_text += "\t\t# " + dev["human_name"] + "\n"
-        groups6_text += "\thost " + dev["name"] + " {\n"
-        groups6_text += "\t\t# " + dev["human_name"] + "\n"
-        if dev.get("mac"):
-            groups_text += "\t\thardware ethernet " + dev["mac"] + ";\n"
-            groups6_text += "\t\thardware ethernet " + dev["mac"] + ";\n"
-        if dev.get("ip"):
-            groups_text += "\t\tfixed-address " + dev["ip"] + ";\n"
-        if dev.get("ipv6"):
-            groups6_text += "\t\tfixed-address6 " + dev["ipv6"] + ";\n"
-        if dev.get("deny"):
+    for dev in properties.devices:
+        logging.debug(f"|- {dev.human_name}: {dev.mac} -> {dev.ip} / {dev.ipv6}")
+        groups_text += f"\thost {dev.name} {{\n"
+        groups_text += f"\t\t# {dev.human_name}\n"
+        groups6_text += f"\thost {dev.name} {{\n"
+        groups6_text += f"\t\t# {dev.human_name}\n"
+        if dev.mac is not None:
+            groups_text += f"\t\thardware ethernet {dev.mac};\n"
+            groups6_text += f"\t\thardware ethernet {dev.mac};\n"
+        if dev.ip is not None:
+            groups_text += f"\t\tfixed-address {dev.ip};\n"
+        if dev.ipv6 is not None:
+            groups6_text += f"\t\tfixed-address6 {dev.ipv6};\n"
+        if dev.deny:
+            logging.debug("|  '- deny booting;")
             groups_text += "\t\tdeny booting;\n"
             groups6_text += "\t\tdeny booting;\n"
         groups_text += "\t}\n"
