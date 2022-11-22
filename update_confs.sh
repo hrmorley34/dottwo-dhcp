@@ -4,7 +4,7 @@ CSV="dhcpd-conf.csv"
 
 function test_config() { FILE="$1"; shift; dhcpd -f -t -q "$@" -cf "$FILE"; }
 
-cd /mnt/morleynas/home
+cd "$(dirname "$0")" || { echo "Cannot find current dir"; exit 1; }
 
 echo "Parsing v4"
 ./parse_conf.py -t template/dhcpd.template.conf -o gen/dhcpd.conf -s "$CSV" "$@"
